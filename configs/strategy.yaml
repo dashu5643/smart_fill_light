@@ -1,0 +1,294 @@
+# ============================================================
+# 智能补光单帧策略引擎 · 参数表
+# 代码只做引擎，所有阈值、色彩、规则都在这里调。
+# 颜色统一用 HSV：hue 0-360（度），sat 0-1，val(亮度) 0-1。
+# 数值来源标注：
+#   [T1]   《环境光污染_互补色匹配参数表》/ 色彩矫正测试.xlsx（6/17-6/25 实测）
+#   [分类] 《环境光分类标准》   [多人] 《多人场景补光方案》
+#   [文档] 早期需求文档        [校准] 用 testset/t1 162 张实拍照片校准
+#   [经验] 待校准的初值
+# ============================================================
+
+paths:
+  face_landmarker: models/face_landmarker.task
+
+# ---------------- 硬件：SureShot 双灯板 ----------------
+hardware:
+  rows: 18                 # 每块灯板 18 行
+  cols: 6                  # 每块灯板 6 列
+  boards: [left, right]    # 观察者视角（站在灯前看）
+  # 列方向：左板 x0=外侧 → x5=内侧（靠屏幕）；右板 x0=内侧 → x5=外侧
+  inner_cols: 4            # 夹心灯（sandwich）：靠屏幕 4 列 = 面部主光，外侧 2 列 = 轮廓光
+  ring_inner_cols: 2       # 内外圈（dual）：靠屏幕 2 列 = 内圈（小面积、更浓），其余 4 列 = 外圈（大面积）[T1]
+  row_bands:               # 行带 → 面部区域（与 skin_state_presets.json 保持一致）
+    forehead: [0, 2]
+    eye: [3, 6]
+    cheek: [7, 10]
+    nasolabial: [11, 13]
+    lip: [14, 17]
+  max_total_duty: 0.55     # [经验] 整机电流钳位：864 通道总占空比上限（相对全部拉满）
+  w_led_cct: 5600          # W 灯珠色温（暂不参与计算）
+  image_mirrored: false    # 若输入是前置摄像头镜像图，设 true 以交换左右板
+
+# ---------------- 灯光台架下发（ss2-light-bench，USB-C 网卡 → V1.5 主板）----------------
+bench:
+  tool_dir: ../ss2-light-bench          # ss2light.py 所在目录（相对项目根，或绝对路径）
+  host: 192.168.7.1                     # 板子地址；假板端用 127.0.0.1 + 8080
+  port: 80
+  state_file: outputs/bench/ss2light-state.json   # 台架"上一次状态"（部分更新 / 渐变起点）
+  transition_ms: 300                    # 切换策略时的渐变时长；0 = 硬切
+  max_current_a: 0.95                   # 台架电流上限（ss2light 硬上限 1.0A，只插电脑时）；超了整体等比缩放
+  # 方位校正：先跑 scripts/to_bench.py --identify，看灯板与下列预期是否一致，不一致就改这里
+  #   预期（站在灯前面向灯板）：左板红、右板蓝；靠屏幕的一列白；最上一行绿
+  swap_boards: false                    # 左右板对调
+  mirror_cols: false                    # 每块板内列左右翻转
+  flip_rows: false                      # 上下翻转
+  record_dir: outputs/bench/records     # 验收记录（取景画面 + 下发参数 + 灯光照片）
+
+# ---------------- 人脸 & 质量 ----------------
+face:
+  max_faces: 6
+  min_detection_confidence: 0.4
+  min_face_width_ratio: 0.06   # 人脸宽 / 图宽 小于此值视为太远，不做肤色判断
+  roi_radius_ratio: 0.07       # 圆形采样 ROI 半径 / 脸宽
+
+# ---------------- 画面曝光异常 [分类 §3.3 §6] ----------------
+exposure:
+  dark_V: 0.10               # 全画面平均明度 V < 10% → 暗光环境，不输出环境光分类
+  over_V: 0.95               # 全画面 V > 95% 且 S < 10% → 过曝，归 L0
+  over_S: 0.10
+
+# ---------------- 拍摄距离（决定补光饱和度）[T1 §二] ----------------
+distance:
+  # 注意：T1 的"距离"是灯到人脸距离。按脸宽估计的是镜头距离，只有灯与镜头同位时才等价；
+  # T1 实拍 30cm 组的脸宽只比 60cm 组大 ~1.3 倍（理论 2 倍），说明两者并不同步。
+  # 能拿到真实灯距时请用 --distance 传入；estimate_from_face=false 则未传时固定用 default_cm。
+  # T1 实测：60cm 组按脸宽估出中位 ~34-64cm，误差大，会把饱和度错误压低 → 默认关闭
+  estimate_from_face: false
+  default_cm: 60             # 无人脸 / 无法估计时
+  face_width_cm: 14.0        # 两颊外轮廓宽度（成人均值）
+  hfov_deg: 60.0             # [校准] 手机竖拍 3:4 时图像宽方向视场角；T1 实拍 60cm 处脸宽≈图宽 0.18-0.21
+  # 饱和度衰减：S = S_60cm × factor；点之间线性插值，两端截断
+  attenuation: [[20, 0.40], [30, 0.53], [60, 1.00]]
+
+# ---------------- 肤色分级 L1-L6（ITA°，Chardon 分级）[文档] ----------------
+skin:
+  ita_levels:                 # ITA 下限 → 等级（从上往下匹配）
+    - {min: 55,  level: L1}
+    - {min: 41,  level: L2}
+    - {min: 28,  level: L3}
+    - {min: 10,  level: L4}
+    - {min: -30, level: L5}
+    - {min: -999, level: L6}
+  groups: {L1: fair, L2: fair, L3: medium, L4: medium, L5: deep, L6: deep}
+  undertone:
+    olive_max_a: 7.0
+    olive_min_b: 14.0
+    warm_min_hue: 62.0
+    cool_max_hue: 45.0
+  # [校准] 强色光下肤色不可判：T1 中紫/蓝/粉光无补光时，皮肤某一通道几乎为 0，
+  # 黄种人 11/13 被判成深肤色。满足任一条件即判"肤色不可靠"，改用 fallback 组。
+  reliability:
+    max_cast_s: 60            # 污染 S ≥ 60（重度）
+    min_channel_ratio: 0.12   # 皮肤线性 RGB 最小通道 / 最大通道 < 0.12（某通道信息丢失）
+    min_face_L: 20            # 脸太暗
+  unknown_fallback_group: medium   # 不可判时按黄种人参数（目标用户主体；T1 表中黄种人参数最保守）
+
+# ---------------- 环境光分类 [分类 §2 §3] ----------------
+cast:
+  ref_skin_ab: [13.0, 17.0]         # 人脸当"色卡"：正常肤色 Lab 色度先验
+  face_weight: 0.70                 # [分类 §4.2] 人脸 ROI 色偏优先
+  face_weight_disagree: 0.90
+  # 色系（估计光源的 HSV 色相，左闭右开）。
+  # 分类标准给的是理论区间（蓝 200-260 / 紫 260-320 / 暖粉 320-20）；
+  # [校准] T1 实拍：蓝光 221-260°、紫光 270-296°、粉光 302-333°，故边界改为 265° / 300°。
+  # [校准] 暖粉下界由理论 20° 收到 15°：文档样本中餐厅/钨丝灯暖橙光色相 15-30°，
+  #        归暖粉会给青绿互补（错误），归黄光（L5）+ AWB 阈值更合理。
+  hue_classes:
+    pink:   [[300, 360], [0, 15]]   # L4 暖粉（含红）
+    yellow: [[15, 80]]              # L5 黄光 / 暖橙光（理论，待实测）
+    green:  [[80, 160]]             # L2 绿光
+    cyan:   [[160, 200]]            # L6 青光（理论，待实测）
+    blue:   [[200, 265]]            # L1 蓝光
+    purple: [[265, 300]]            # L3 紫光
+  categories:                       # 输出编码 [分类 §2.1]
+    blue:   {code: L1, name: 蓝光}
+    green:  {code: L2, name: 绿光}
+    purple: {code: L3, name: 紫光}
+    pink:   {code: L4, name: 暖粉}
+    yellow: {code: L5, name: 黄光}
+    cyan:   {code: L6, name: 青光}
+    neutral: {code: L0, name: 中性白光}
+  class_min_s: {yellow: 38}         # 室内暖黄光多被相机 AWB 吃掉，轻微暖调不算污染
+  levels:                           # [分类 §5.1] S < 15 → L0 中性；<30 轻度；<60 中度；≥60 重度
+    none: 15
+    light: 30
+    medium: 60
+  multi_color:                      # [分类 §4.4] 多色光源（霓虹）模式
+    min_peak_share: 0.15            # 每个色相类别占彩色像素 > 15%
+    min_colored_share: 0.15         # 且彩色像素占背景 > 15%
+    sat_boost: 1.12                 # 补光饱和度 +10~15%
+
+# ---------------- 互补色参数表（肤色优先 · 有光污染）[T1 §一] ----------------
+# 60cm 基准值：外圈 [H, S%] 大面积，内圈 [H, S%] 小面积更浓；score = 实测效果分（1-5，null=未测）
+complement_table:
+  purple:   # 紫光 KTV/酒吧/霓虹紫
+    medium: {outer: [75, 75],  inner: [190, 100], score: 5}
+    fair:   {outer: [75, 75],  inner: [190, 100], score: 4}
+    deep:   {outer: [75, 75],  inner: [190, 100], score: 3, note: 需更高饱和才可见，待验证}
+  pink:     # 粉光 暖粉灯/霓虹粉
+    medium: {outer: [150, 40], inner: [110, 50],  score: 5, note: 黄种人粉光 S>50% 脸脏，必须低饱和}
+    fair:   {outer: [150, 75], inner: [110, 100], score: 4}
+    deep:   {outer: [150, 75], inner: [110, 100], score: 3, note: 待验证；与深肤禁冷色冲突}
+  blue:     # 蓝光 霓虹蓝/冷 LED
+    medium: {outer: [45, 40],  inner: [39, 50],   score: 5, note: 高饱和(75/100)也可，低饱和更自然}
+    fair:   {outer: [45, 75],  inner: [39, 100],  score: 4}
+    deep:   {outer: [45, 40],  inner: [39, 50],   score: 3, note: 待验证}
+  green:    # 绿光 荧光灯/树荫（高饱和无效）
+    medium: {outer: [298, 40], inner: [280, 50],  score: 4}
+    fair:   {outer: [298, 40], inner: [280, 50],  score: 4}
+    deep:   {outer: [298, 40], inner: [280, 50],  score: 3, note: 待验证}
+  yellow:   # 黄光（理论定义，未实测）→ 冷白；深肤禁纯白 → 中性偏黄
+    medium: {outer: [215, 12], inner: [220, 18], score: null}
+    fair:   {outer: [215, 12], inner: [220, 18], score: null}
+    deep:   {outer: [46, 12],  inner: [46, 15],  score: null}
+  cyan:     # 青光（理论定义，未实测）→ 暖粉/暖橙
+    medium: {outer: [30, 30],  inner: [28, 40],  score: null}
+    fair:   {outer: [350, 28], inner: [350, 35], score: null}
+    deep:   {outer: [28, 40],  inner: [28, 50],  score: null}
+# 高/低饱和备选（60cm 外圈 S、内圈 S）[T1 Sheet1]；绿光高饱和"效果不佳"不提供高饱和备选
+complement_variants: {low: [40, 50], high: [75, 100], no_high: [green, yellow, cyan]}
+# 污染程度 → 饱和度系数 [T1 §三]：S_env ≥ 70 用基准；40-70 ×0.85；< 40 ×0.7
+pollution_sat_scale: [[70, 1.00], [40, 0.85], [0, 0.70]]
+# [分类 §5.3] 肤色 × 污染等级 的补光饱和度上限（%）。
+# 注意：与 T1 参数表冲突（如 黄种人×紫光 表值 75/100，此矩阵上限 50）。默认不启用，以 T1 实测表为准。
+skin_sat_caps:
+  enforce: false
+  medium: {light: 35, medium: 45, heavy: 50}
+  fair:   {light: 40, medium: 60, heavy: 75}
+  deep:   {light: 35, medium: 50, heavy: 60}
+
+# ---------------- 命名色板（无污染时的肤色光 / 修饰色）----------------
+palette:
+  暖黄:   {hue: 45,  sat: 0.30}
+  黄:     {hue: 52,  sat: 0.35}
+  浅黄:   {hue: 55,  sat: 0.22}
+  橙:     {hue: 28,  sat: 0.45}
+  橘:     {hue: 24,  sat: 0.35}
+  暖橙:   {hue: 30,  sat: 0.30}
+  淡橙:   {hue: 30,  sat: 0.20}
+  淡黄:   {hue: 50,  sat: 0.20}
+  淡粉:   {hue: 350, sat: 0.18}
+  暖粉:   {hue: 350, sat: 0.28}
+  粉:     {hue: 340, sat: 0.22}
+  紫粉:   {hue: 318, sat: 0.28}
+  浅紫:   {hue: 280, sat: 0.18}
+  紫:     {hue: 275, sat: 0.22}
+  黄青:   {hue: 75,  sat: 0.28}
+  青绿:   {hue: 165, sat: 0.28}
+  青:     {hue: 185, sat: 0.22}
+  浅蓝:   {hue: 205, sat: 0.18}
+  冷白:   {hue: 210, sat: 0.08}
+  暖白:   {hue: 35,  sat: 0.12}
+  中性白: {hue: 40,  sat: 0.04}
+  中性偏黄: {hue: 46, sat: 0.12}
+
+saturation_presets: {low: 0.28, high: 0.50}
+hue_family_sat_cap:                           # 仅作用于无污染肤色光：青绿 S>45% 脸发脏
+  - {range: [65, 200], cap: 0.45}
+
+# ---------------- 常规肤色光（肤色优先 · 无光污染）[文档] ----------------
+base_light:
+  fair:
+    warm:    {type: mono, color: 粉}
+    cool:    {type: mono, color: 浅蓝}
+    neutral: {type: mono, color: 暖白}
+  medium:
+    warm:    {type: sandwich, inner: 橘, outer: 黄}
+    cool:    {type: mono, color: 浅紫}
+    neutral: {type: mono, color: 暖黄}
+  deep:
+    warm:    {type: sandwich, inner: 橙, outer: 黄, sat: high}
+    cool:    {type: mono, color: 暖黄}
+    neutral: {type: sandwich, inner: 橙, outer: 暖黄}
+undertone_override:
+  fair_cool: 青
+  fair_olive: 紫
+  medium_olive: 浅紫
+
+taboo:
+  deep:  {forbid_hues: [[90, 200]], forbid_white: true, replace: 暖黄}
+  olive: {forbid_hues: [[170, 240]], replace: 浅紫}
+
+# ---------------- 瑕疵修饰 [实测 6/23-6/25] ----------------
+blemish:
+  dark_circle_delta_L: 7.0
+  redness_delta_a: 5.0
+  eye_patch:
+    fair:   {color: 橘, extra_val: 0.15}
+    medium: {color: 橘, extra_val: 0.15}
+    deep:   {color: 橙, extra_val: 0.10}
+
+# ---------------- 光线方向 ----------------
+direction:
+  side_delta_L: 10.0
+  top_delta_L: 22.0
+  back_delta_L: 22.0
+  side_boost: 0.25
+  # 强色光下肤色不可靠时，左右脸颊 L 差主要来自色光照射角度/饱和，不代表真实明暗 → 不判侧光/顶光
+  skip_side_top_when_skin_unreliable: true
+  top_gradient: 0.35
+
+# ---------------- 亮度 ----------------
+brightness:
+  target_face_L: 62.0
+  base: 0.60
+  per_L: 0.012
+  min: 0.35
+  max: 1.00
+  deep_min: 0.85
+  backlight: 1.00
+  far_face_bonus: 0.10
+  polluted: 1.00                # [T1] 互补色参数均在 V=100 满亮下测得
+  dark_scene: 1.00              # 暗光环境：只做提亮
+
+# ---------------- 场景光优先 ----------------
+scene_priority:
+  inner_sat_ratio: 0.45
+  inner_sat_cap: 0.30
+  outer_sat_ratio: 0.80
+  outer_sat_cap: 0.60
+  pull_to_skin: 0.25
+  skin_hue: 35
+  shadow_contour_min_ratio: 0.30
+
+# ---------------- 多人 [多人] ----------------
+multi_face:
+  # 2 人且肤色组相同（且都可判）→ 按单人专属参数；否则 / 3 人以上 → 安全交集色
+  same_group_as_single: true
+  # 环境光 → 多人安全色 [H, S%]（60cm 基准，近距离按 distance.attenuation 衰减）[多人 §5.2]
+  safe_by_env:
+    purple: {name: 暖黄绿, color: [75, 30]}
+    pink:   {name: 淡橙,   color: [30, 40]}
+    blue:   {name: 淡黄,   color: [45, 35]}
+    green:  {name: 淡粉,   color: [350, 35]}
+    yellow: {name: 淡黄,   color: [45, 25]}   # 暖光/安全：轻微提亮
+    cyan:   {name: 淡橙,   color: [30, 40]}   # 未实测：取暖色安全色
+    none:   {name: 淡黄,   color: [45, 25]}
+  safe_alternatives:            # [多人 §2.2] 全肤色安全交集色
+    - {name: 淡黄, color: [45, 35]}
+    - {name: 淡橙, color: [30, 40]}
+    - {name: 淡粉, color: [350, 35]}
+  scene_sat_cap: 0.25
+
+# ---------------- 物品模式（无人脸）[文档] ----------------
+object_mode:
+  food_cn:  {type: mono, color: 暖橙}
+  food_west: {type: mono, color: 暖橙}
+  dessert:  {type: mono, color: 中性偏黄}
+  salad:    {type: mono, color: 中性偏黄}
+  beauty:   {type: mono, color: 暖白}
+  jewelry:  {type: sandwich, inner: 中性偏黄, outer: 浅蓝}
+  plant:    {type: mono, color: 暖黄}
+  complement_families: [blue, green, purple, pink]   # 无人脸时只对实测过的彩色光做互补；暖黄光下物品保留暖调
+  dark_fallback: [浅蓝, 青, 中性偏黄]

@@ -1,0 +1,16 @@
+# 环境与 IDE
+.venv/
+python
+__pycache__/
+*.pyc
+.idea/
+
+# 运行输出
+outputs/
+
+# 数据（含人像/内部测试数据，不入库）
+samples/
+testset/
+/*.jpg
+/*.jpeg
+/*.png
