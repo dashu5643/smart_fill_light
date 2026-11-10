@@ -1,5 +1,4 @@
 numpy
-opencv-python-headless
-mediapipe>=0.10.14
-pillow
-pyyaml
+mediapipe>=0.10.14      # 人脸关键点；会一并安装 OpenCV（opencv-contrib-python）
+pillow                  # 报告图
+pyyaml                  # 读配置

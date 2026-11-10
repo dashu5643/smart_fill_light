@@ -1,0 +1,18 @@
+# ============================================================
+# 灯板下发（可选）：经 ss2-light-bench 台架工具，USB-C 网卡 → V1.5 主板 → 灯板
+# 只有 scripts/to_bench.py、scripts/live.py 和 infer.py --send 会读这个文件；算法本身不依赖它。
+# ============================================================
+tool_dir: ../ss2-light-bench          # ss2light.py 所在目录（相对项目根，或绝对路径）
+host: 192.168.7.1                     # 板子地址；假板端用 --fake（127.0.0.1:8080）
+port: 80
+state_file: outputs/bench/ss2light-state.json   # 台架"上一次状态"（部分更新 / 渐变起点）
+transition_ms: 300                    # 切换策略时的渐变时长；0 = 硬切
+max_current_a: 0.95                   # 台架电流上限（ss2light 硬上限 1.0A，只插电脑时）；超了整体等比缩放
+
+# 方位校正：先跑 scripts/to_bench.py --identify，看灯板与下列预期是否一致，不一致就改这里
+#   预期（站在灯前面向灯板）：左板红、右板蓝；靠屏幕的一列白；最上一行绿
+swap_boards: false                    # 左右板对调
+mirror_cols: false                    # 每块板内列左右翻转
+flip_rows: false                      # 上下翻转
+
+record_dir: outputs/bench/records     # 验收记录（取景画面 + 下发参数 + 灯光照片）

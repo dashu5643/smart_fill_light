@@ -1,6 +1,7 @@
 # ============================================================
-# 智能补光单帧策略引擎 · 参数表
+# 智能补光单帧策略引擎 · 算法参数表
 # 代码只做引擎，所有阈值、色彩、规则都在这里调。
+# （灯板下发的连接参数不在这里，见 configs/bench.yaml）
 # 颜色统一用 HSV：hue 0-360（度），sat 0-1，val(亮度) 0-1。
 # 数值来源标注：
 #   [T1]   《环境光污染_互补色匹配参数表》/ 色彩矫正测试.xlsx（6/17-6/25 实测）
@@ -29,21 +30,6 @@ hardware:
   max_total_duty: 0.55     # [经验] 整机电流钳位：864 通道总占空比上限（相对全部拉满）
   w_led_cct: 5600          # W 灯珠色温（暂不参与计算）
   image_mirrored: false    # 若输入是前置摄像头镜像图，设 true 以交换左右板
-
-# ---------------- 灯光台架下发（ss2-light-bench，USB-C 网卡 → V1.5 主板）----------------
-bench:
-  tool_dir: ../ss2-light-bench          # ss2light.py 所在目录（相对项目根，或绝对路径）
-  host: 192.168.7.1                     # 板子地址；假板端用 127.0.0.1 + 8080
-  port: 80
-  state_file: outputs/bench/ss2light-state.json   # 台架"上一次状态"（部分更新 / 渐变起点）
-  transition_ms: 300                    # 切换策略时的渐变时长；0 = 硬切
-  max_current_a: 0.95                   # 台架电流上限（ss2light 硬上限 1.0A，只插电脑时）；超了整体等比缩放
-  # 方位校正：先跑 scripts/to_bench.py --identify，看灯板与下列预期是否一致，不一致就改这里
-  #   预期（站在灯前面向灯板）：左板红、右板蓝；靠屏幕的一列白；最上一行绿
-  swap_boards: false                    # 左右板对调
-  mirror_cols: false                    # 每块板内列左右翻转
-  flip_rows: false                      # 上下翻转
-  record_dir: outputs/bench/records     # 验收记录（取景画面 + 下发参数 + 灯光照片）
 
 # ---------------- 人脸 & 质量 ----------------
 face:

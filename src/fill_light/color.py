@@ -53,10 +53,6 @@ def lab_to_linear(lab: np.ndarray) -> np.ndarray:
     return np.clip(xyz @ _M_XYZ2RGB.T, 0.0, None)
 
 
-def rgb8_to_lab(rgb: np.ndarray) -> np.ndarray:
-    return linear_to_lab(srgb_to_linear(np.asarray(rgb, dtype=np.float64) / 255.0))
-
-
 def ita_deg(lab: np.ndarray) -> float:
     L, _, b = lab
     return float(math.degrees(math.atan2(L - 50.0, b if abs(b) > 1e-6 else 1e-6)))
